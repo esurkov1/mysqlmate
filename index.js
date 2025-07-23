@@ -3,6 +3,14 @@ const EventEmitter = require('events');
 
 class Database extends EventEmitter {
 
+    #createDefaultLogger() {
+        const levels = ['info', 'error', 'warn', 'debug'];
+        const prefix = '[Database]';
+        return Object.fromEntries(
+          levels.map(level => [level, (msg, meta = {}) => console[level](`${prefix} ${level.toUpperCase()} ${msg}`, meta)])
+        );
+    }
+
     constructor(config, options = {}) {
         super();
         
@@ -42,14 +50,6 @@ class Database extends EventEmitter {
         this.pool = mysql.createPool(this.config);
         this._setupPoolEvents();
         this._healthcheckInterval = setInterval(() => this._healthcheck(), 30000);
-    }
-
-    #createDefaultLogger() {
-        const levels = ['info', 'error', 'warn', 'debug'];
-        const prefix = '[Database]';
-        return Object.fromEntries(
-          levels.map(level => [level, (msg, meta = {}) => console[level](`${prefix} ${level.toUpperCase()} ${msg}`, meta)])
-        );
     }
 
     _setupPoolEvents() {
