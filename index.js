@@ -1,16 +1,42 @@
 const mysql = require('mysql2/promise');
 const EventEmitter = require('events');
 
+// Функция логирования с возможностью отключения и кастомизации
+function createLogger(customLogger = null) {
+    return {
+        log: customLogger?.log || ((level, message, meta) => {
+            if (process.env.MYSQLMATE_LOGGING === 'disabled') return;
+            const prefix = '[Database]';
+            switch(level) {
+                case 'info':
+                    console.info(prefix, message, meta);
+                    break;
+                case 'warn':
+                    console.warn(prefix, message, meta);
+                    break;
+                case 'error':
+                    console.error(prefix, message, meta);
+                    break;
+                case 'debug':
+                    if (process.env.NODE_ENV !== 'production') {
+                        console.debug(prefix, message, meta);
+                    }
+                    break;
+            }
+        })
+    };
+}
+
 class Database extends EventEmitter {
-    constructor(config) {
+    constructor(config, customLogger = null) {
         super();
         this.config = {
             ...config,
             connectTimeout: 10000,
-            acquireTimeout: 60000,
-            timeout: 60000,
-            reconnect: true,
         };
+        
+        // Инициализация логгера
+        this.logger = createLogger(customLogger);
         
         // Метрики
         this.metrics = {
@@ -92,10 +118,11 @@ class Database extends EventEmitter {
                 this._updateMetrics(duration);
                 
                 if (process.env.NODE_ENV !== 'production' || options.logQuery) {
-                    console.info(`[DB] Query executed in ${duration}ms`, { 
+                    this.logger.log('info', 'Query executed', { 
                         sql: sql.substring(0, 100) + (sql.length > 100 ? '...' : ''),
                         paramCount: params.length,
-                        attempt: attempt + 1
+                        attempt: attempt + 1,
+                        duration: `${duration}ms`
                     });
                 }
                 
@@ -111,11 +138,12 @@ class Database extends EventEmitter {
                 );
                 
                 if (skipRetry || !isRetryable || attempt === maxRetries) {
-                    console.error(`[DB] Query failed (attempt ${attempt + 1}/${maxRetries + 1})`, {
+                    this.logger.log('error', 'Query failed', {
                         sql: sql.substring(0, 100),
                         params: params.length,
                         error: error.message,
-                        code: error.code
+                        code: error.code,
+                        attempt: attempt + 1
                     });
                     
                     this.emit('queryError', { sql, params, error, attempt });
@@ -123,9 +151,11 @@ class Database extends EventEmitter {
                 }
                 
                 const delay = this.retryConfig.retryDelay * Math.pow(this.retryConfig.backoffMultiplier, attempt);
-                console.warn(`[DB] Query failed, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})`, {
+                this.logger.log('warn', 'Query failed, retrying', {
                     error: error.message,
-                    code: error.code
+                    code: error.code,
+                    delay: `${delay}ms`,
+                    attempt: attempt + 1
                 });
                 
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -149,7 +179,7 @@ class Database extends EventEmitter {
             await this.query('SELECT 1 as health_check', [], { skipRetry: true });
             this.emit('healthcheck', { status: 'healthy' });
         } catch (error) {
-            console.error('[DB] Healthcheck failed', { error: error.message });
+            this.logger.log('error', 'Healthcheck failed', { error: error.message });
             this.emit('healthcheck', { status: 'unhealthy', error });
         }
     }
@@ -239,7 +269,7 @@ class Database extends EventEmitter {
             );
 
             if (existing.length > 0) {
-                console.info('[DB] Migration already executed', { migrationName });
+                this.logger.log('info', 'Migration already executed', { migrationName });
                 return { executed: false, migrationName };
             }
 
@@ -250,7 +280,7 @@ class Database extends EventEmitter {
                 [migrationName]
             );
 
-            console.info('[DB] Migration executed successfully', { migrationName });
+            this.logger.log('info', 'Migration executed successfully', { migrationName });
             return { executed: true, migrationName };
         });
     }
@@ -263,10 +293,10 @@ class Database extends EventEmitter {
         
         try {
             await this.pool.end();
-            console.info('[DB] Connection pool closed successfully');
+            this.logger.log('info', 'Connection pool closed successfully');
             this.emit('close');
         } catch (error) {
-            console.error(`[DB] Failed to close connection pool`, { error: error.message });
+            this.logger.log('error', 'Failed to close connection pool', { error: error.message });
             throw error;
         }
     }
@@ -274,12 +304,11 @@ class Database extends EventEmitter {
     // Получение соединения
     async getConnection() {
         try {
-
             const connection = await this.pool.getConnection();
-            console.debug('[DB] Connection obtained');
+            this.logger.log('debug', 'Connection obtained');
             return connection;
         } catch (error) {
-            console.error(`[DB] Failed to obtain connection`, { error: error.message });
+            this.logger.log('error', 'Failed to obtain connection', { error: error.message });
             throw error;
         }
     }
@@ -290,18 +319,18 @@ class Database extends EventEmitter {
 
         try {
             await connection.beginTransaction();
-            console.debug('[DB] Transaction started');
+            this.logger.log('debug', 'Transaction started');
             const result = await callback(connection);
             await connection.commit();
-            console.info('[DB] Transaction committed successfully');
+            this.logger.log('info', 'Transaction committed successfully');
             return result;
         } catch (error) {
             await connection.rollback();
-            console.error(`[DB] Transaction failed`, { error: error.message });
+            this.logger.log('error', 'Transaction failed', { error: error.message });
             throw error;
         } finally {
             connection.release();
-            console.debug('[DB] Connection released');
+            this.logger.log('debug', 'Connection released');
         }
     }
 }
