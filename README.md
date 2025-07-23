@@ -17,7 +17,7 @@ MySQLMate - мощный мини-фреймворк для работы с MySQ
 - Безопасное выполнение транзакций
 
 ### 📊 Мониторинг и метрики
--Real-time метрики производительности
+- Real-time метрики производительности
 - Встроенный healthcheck
 - Логирование запросов
 
@@ -37,49 +37,136 @@ npm install mysqlmate
 ```javascript
 const Database = require('mysqlmate');
 
-// Создание подключения
 const db = new Database({
   host: 'localhost',
   user: 'username',
   password: 'password',
   database: 'mydb'
 });
-
-// Простой запрос
-const [users] = await db.query('SELECT * FROM users WHERE active = ?', [true]);
-
-// Транзакция
-await db.transaction(async (connection) => {
-  await connection.execute('INSERT INTO logs (action) VALUES (?)', ['user_login']);
-  await connection.execute('UPDATE users SET last_login = NOW() WHERE id = ?', [userId]);
-});
 ```
 
 ## 📖 Полная документация
 
-### Конфигурация
+### 1. Базовые запросы `query()`
 
 ```javascript
-const db = new Database({
-  host: 'localhost',           // Хост базы данных
-  user: 'username',             // Пользователь
-  password: 'password',         // Пароль
-  database: 'mydb',             // Имя базы данных
+// Простой SELECT запрос с параметрами
+const [users] = await db.query(
+  'SELECT * FROM users WHERE status = ?', 
+  ['active']
+);
+
+// INSERT запрос
+const [result] = await db.query(
+  'INSERT INTO users (name, email) VALUES (?, ?)', 
+  ['John Doe', 'john@example.com']
+);
+console.log(result.insertId);
+
+// UPDATE запрос
+await db.query(
+  'UPDATE users SET last_login = NOW() WHERE id = ?', 
+  [userId]
+);
+```
+
+### 2. Транзакции `transaction()`
+
+```javascript
+// Безопасное выполнение нескольких связанных операций
+await db.transaction(async (connection) => {
+  // Списание средств
+  await connection.execute(
+    'UPDATE accounts SET balance = balance - ? WHERE id = ?', 
+    [100, senderId]
+  );
   
-  // Дополнительные настройки
-  connectTimeout: 10000,        // Время ожидания подключения (мс)
-  acquireTimeout: 60000,        // Время получения соединения (мс)
-  reconnect: true               // Автоматический реконнект
+  // Зачисление средств
+  await connection.execute(
+    'UPDATE accounts SET balance = balance + ? WHERE id = ?', 
+    [100, recipientId]
+  );
+  
+  // Логирование транзакции
+  await connection.execute(
+    'INSERT INTO transfers (sender_id, recipient_id, amount) VALUES (?, ?, ?)', 
+    [senderId, recipientId, 100]
+  );
 });
 ```
 
-### Основные методы
+### 3. Множественные запросы `multiQuery()`
 
-- `query(sql, params)`: Выполнение SQL-запроса
-- `transaction(callback)`: Выполнение транзакции
-- `multiQuery(queries)`: Выполнение нескольких запросов
-- `healthcheck()`: Проверка состояния подключения
-- `getMetrics()`: Получение текущих метрик производительности
+```javascript
+// Выполнение нескольких независимых запросов
+const results = await db.multiQuery([
+  { 
+    sql: 'SELECT * FROM users WHERE role = ?', 
+    params: ['admin'] 
+  },
+  { 
+    sql: 'SELECT COUNT(*) as total FROM posts', 
+    params: [] 
+  },
+  { 
+    sql: 'UPDATE stats SET last_check = NOW()', 
+    params: [] 
+  }
+]);
+
+// Обработка результатов
+results.forEach(({ index, result }) => {
+  console.log(`Результат запроса ${index}:`, result);
+});
+```
+
+### 4. Healthcheck `healthcheck()`
+
+```javascript
+// Проверка состояния подключения
+const healthStatus = await db.healthcheck();
+
+// Проверка статуса
+if (healthStatus.status === 'healthy') {
+  console.log('Подключение к базе данных стабильно');
+  console.log('Метрики:', healthStatus.metrics);
+} else {
+  console.error('Проблемы с подключением', healthStatus.error);
+}
+```
+
+### 5. Получение метрик `getMetrics()`
+
+```javascript
+// Получение текущих метрик производительности
+const metrics = db.getMetrics();
+
+console.log('Всего запросов:', metrics.totalQueries);
+console.log('Неудачных запросов:', metrics.failedQueries);
+console.log('Среднее время запроса:', metrics.avgQueryTime);
+
+// Информация о пуле соединений
+console.log('Активные соединения:', metrics.poolInfo.activeConnections);
+```
+
+### 6. Миграции `runMigration()`
+
+```javascript
+// Простая миграция для создания таблицы
+await db.runMigration(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Миграция с добавлением индекса
+await db.runMigration(`
+  CREATE INDEX idx_username ON users (username)
+`);
+```
 
 ## 🛡️ Безопасность
 
