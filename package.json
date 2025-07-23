@@ -7,7 +7,7 @@
     "test": "jest",
     "lint": "eslint ."
   },
-  "keywords": ["mysql", "database", "orm", "connection-pool"],
+  "keywords": ["node", "nodejs", "sql", "mysql", "database", "orm", "connection-pool"],
   "author": "Eugene Surkov",
   "license": "MIT",
   "dependencies": {
