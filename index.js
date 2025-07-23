@@ -2,33 +2,6 @@ const mysql = require('mysql2/promise');
 const EventEmitter = require('events');
 
 class Database extends EventEmitter {
-    // Приватный метод создания логера по умолчанию
-    #createDefaultLogger() {
-        return {
-            log: (level, message, meta = {}) => {
-                if (process.env.MYSQLMATE_LOGGING === 'disabled') return;
-                const prefix = '[Database]';
-                const timestamp = new Date().toISOString();
-                
-                switch(level) {
-                    case 'info':
-                        console.info(`${prefix} [${timestamp}]`, message, meta);
-                        break;
-                    case 'warn':
-                        console.warn(`${prefix} [${timestamp}]`, message, meta);
-                        break;
-                    case 'error':
-                        console.error(`${prefix} [${timestamp}]`, message, meta);
-                        break;
-                    case 'debug':
-                        if (process.env.NODE_ENV !== 'production') {
-                            console.debug(`${prefix} [${timestamp}]`, message, meta);
-                        }
-                        break;
-                }
-            }
-        };
-    }
 
     constructor(config, options = {}) {
         super();
@@ -69,6 +42,14 @@ class Database extends EventEmitter {
         this.pool = mysql.createPool(this.config);
         this._setupPoolEvents();
         this._healthcheckInterval = setInterval(() => this._healthcheck(), 30000);
+    }
+
+    #createDefaultLogger() {
+        const levels = ['info', 'error', 'warn', 'debug'];
+        const prefix = '[Database]';
+        return Object.fromEntries(
+          levels.map(level => [level, (msg, meta = {}) => console[level](`${prefix} ${level.toUpperCase()} ${msg}`, meta)])
+        );
     }
 
     _setupPoolEvents() {
