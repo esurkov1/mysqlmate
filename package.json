@@ -1,0 +1,23 @@
+{
+  "name": "mysqlmate",
+  "version": "1.0.0",
+  "description": "Advanced MySQL connection and query management library",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "keywords": ["mysql", "database", "orm", "connection-pool"],
+  "author": "Eugene Surkov",
+  "license": "MIT",
+  "dependencies": {
+    "mysql2": "^3.6.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.56.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 
