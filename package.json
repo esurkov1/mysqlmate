@@ -1,6 +1,6 @@
 {
   "name": "mysqlmate",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Advanced MySQL connection and query management library",
   "main": "index.js",
   "scripts": {
