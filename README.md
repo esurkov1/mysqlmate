@@ -37,14 +37,26 @@ process.env.MYSQLMATE_LOGGING = 'disabled';
 #### Кастомный логгер
 
 ```javascript
-const myCustomLogger = {
-  log: (level, message, meta) => {
-    // Вая собственная логика логирования
-    console.log(`${level}: ${message}`, meta);
+const db = new Database(config, {
+  logger: {
+    log: (level, message, meta) => {
+      // Вая собственная логика логирования
+      console.log(`${level}: ${message}`, meta);
+    }
   }
-};
+});
+```
 
-const db = new Database(config, myCustomLogger);
+#### Дополнительные настройки подключения
+
+```javascript
+const db = new Database(config, {
+  logger: customLogger,  // Необязательный кастомный логгер
+  connectTimeout: 15000, // Время ожидания подключения в мс
+  maxRetries: 5,         // Максимальное число повторных попыток
+  retryDelay: 2000,      // Задержка между повторными попытками
+  backoffMultiplier: 3   // Множитель экспоненциальной задержки
+});
 ```
 
 ## Переменные окружения

@@ -1,42 +1,46 @@
 const mysql = require('mysql2/promise');
 const EventEmitter = require('events');
 
-// Функция логирования с возможностью отключения и кастомизации
-function createLogger(customLogger = null) {
-    return {
-        log: customLogger?.log || ((level, message, meta) => {
-            if (process.env.MYSQLMATE_LOGGING === 'disabled') return;
-            const prefix = '[Database]';
-            switch(level) {
-                case 'info':
-                    console.info(prefix, message, meta);
-                    break;
-                case 'warn':
-                    console.warn(prefix, message, meta);
-                    break;
-                case 'error':
-                    console.error(prefix, message, meta);
-                    break;
-                case 'debug':
-                    if (process.env.NODE_ENV !== 'production') {
-                        console.debug(prefix, message, meta);
-                    }
-                    break;
-            }
-        })
-    };
-}
-
 class Database extends EventEmitter {
-    constructor(config, customLogger = null) {
+    // Приватный метод создания логера по умолчанию
+    #createDefaultLogger() {
+        return {
+            log: (level, message, meta = {}) => {
+                if (process.env.MYSQLMATE_LOGGING === 'disabled') return;
+                const prefix = '[Database]';
+                const timestamp = new Date().toISOString();
+                
+                switch(level) {
+                    case 'info':
+                        console.info(`${prefix} [${timestamp}]`, message, meta);
+                        break;
+                    case 'warn':
+                        console.warn(`${prefix} [${timestamp}]`, message, meta);
+                        break;
+                    case 'error':
+                        console.error(`${prefix} [${timestamp}]`, message, meta);
+                        break;
+                    case 'debug':
+                        if (process.env.NODE_ENV !== 'production') {
+                            console.debug(`${prefix} [${timestamp}]`, message, meta);
+                        }
+                        break;
+                }
+            }
+        };
+    }
+
+    constructor(config, options = {}) {
         super();
+        
+        // Инициализация логера с возможностью передачи кастомного логера
+        this.logger = options.logger || this.#createDefaultLogger();
+        
+        // Расширенная конфигурация с таймаутами и настройками
         this.config = {
             ...config,
-            connectTimeout: 10000,
+            connectTimeout: options.connectTimeout || 10000,
         };
-        
-        // Инициализация логгера
-        this.logger = createLogger(customLogger);
         
         // Метрики
         this.metrics = {
@@ -49,11 +53,18 @@ class Database extends EventEmitter {
         
         // Retry настройки
         this.retryConfig = {
-            maxRetries: 3,
-            retryDelay: 1000,
-            backoffMultiplier: 2,
+            maxRetries: options.maxRetries || 3,
+            retryDelay: options.retryDelay || 1000,
+            backoffMultiplier: options.backoffMultiplier || 2,
             retryableErrors: ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ETIMEDOUT']
         };
+        
+        // Логируем начало подключения
+        this.logger.log('info', 'Initializing database connection', {
+            host: config.host,
+            database: config.database,
+            connectTimeout: this.config.connectTimeout
+        });
         
         this.pool = mysql.createPool(this.config);
         this._setupPoolEvents();
@@ -61,14 +72,29 @@ class Database extends EventEmitter {
     }
 
     _setupPoolEvents() {
-        this.pool.on('connection', () => {
+        this.pool.on('connection', (connection) => {
             this.metrics.totalConnections++;
             this.metrics.activeConnections++;
+            
+            // Логируем каждое новое соединение с детальной информацией
+            this.logger.log('info', 'New database connection established', {
+                threadId: connection.threadId,
+                totalConnections: this.metrics.totalConnections,
+                activeConnections: this.metrics.activeConnections
+            });
+            
             this.emit('connection');
         });
         
-        this.pool.on('release', () => {
+        this.pool.on('release', (connection) => {
             this.metrics.activeConnections--;
+            
+            // Логируем освобождение соединения
+            this.logger.log('debug', 'Database connection released', {
+                threadId: connection.threadId,
+                activeConnections: this.metrics.activeConnections
+            });
+            
             this.emit('release');
         });
     }
