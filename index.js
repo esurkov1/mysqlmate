@@ -1,21 +1,29 @@
 const mysql = require('mysql2/promise');
 const EventEmitter = require('events');
+const pino = require('pino');
 
-class Database extends EventEmitter {
+class MySQLMate extends EventEmitter {
 
     constructor(config, options = {}) {
         super();
         
-        // Инициализация логера с возможностью передачи кастомного логера
-        this.logger = options.logger || this.#logger();
+        // Logger configuration
+        const loggerConfig = {
+            title: this.constructor.name,
+            level: 'info',
+            isDev: true,
+            ...options.logger
+        };
         
-        // Расширенная конфигурация с таймаутами и настройками
+        this.logger = this.#createLogger(loggerConfig);
+        
+        // Extended configuration with timeouts and settings
         this.config = {
             ...config,
             connectTimeout: options.connectTimeout || 10000,
         };
         
-        // Метрики
+        // Metrics
         this.metrics = {
             totalQueries: 0,
             failedQueries: 0,
@@ -24,7 +32,7 @@ class Database extends EventEmitter {
             totalConnections: 0
         };
         
-        // Retry настройки
+        // Retry settings
         this.retryConfig = {
             maxRetries: options.maxRetries || 3,
             retryDelay: options.retryDelay || 1000,
@@ -32,32 +40,39 @@ class Database extends EventEmitter {
             retryableErrors: ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ETIMEDOUT']
         };
         
-        // Логируем начало подключения
-        this.logger.log('Initializing database connection', {
+        // Log connection initialization
+        this.logger.info({
             host: config.host,
             database: config.database,
             connectTimeout: this.config.connectTimeout
-        });
+        }, 'Initializing database connection');
         
         this.pool = mysql.createPool(this.config);
         this._setupPoolEvents();
         this._healthcheckInterval = setInterval(() => this._healthcheck(), 30000);
     }
 
-    #logger() {
-        const prefix = '[MYSQL]';
-        const logger = (type) => (msg, meta = {}) => {
-            const logMethod = console[type] || console.log;
-            logMethod(`${prefix} ${msg}`, meta);
+    #createLogger(config) {
+        const baseOptions = {
+            name: config.title,
+            level: config.level
         };
 
-        return {
-            log: logger('log'),
-            info: logger('info'),
-            error: logger('error'),
-            warn: logger('warn'),
-            debug: logger('debug')
-        };
+        if (config.isDev) {
+            return pino({
+                ...baseOptions,
+                transport: {
+                    target: 'pino-pretty',
+                    options: {
+                        colorize: true,
+                        translateTime: 'yyyy-mm-dd HH:MM:ss',
+                        ignore: 'pid,hostname'
+                    }
+                }
+            });
+        }
+
+        return pino(baseOptions);
     }
 
     _setupPoolEvents() {
@@ -65,12 +80,12 @@ class Database extends EventEmitter {
             this.metrics.totalConnections++;
             this.metrics.activeConnections++;
             
-            // Логируем каждое новое соединение с детальной информацией
-            this.logger.log('New database connection established', {
+            // Log each new connection with detailed information
+            this.logger.info({
                 threadId: connection.threadId,
                 totalConnections: this.metrics.totalConnections,
                 activeConnections: this.metrics.activeConnections
-            });
+            }, 'New database connection established');
             
             this.emit('connection');
         });
@@ -78,17 +93,17 @@ class Database extends EventEmitter {
         this.pool.on('release', (connection) => {
             this.metrics.activeConnections--;
             
-            // Логируем освобождение соединения
-            this.logger.debug('Database connection released', {
+            // Log connection release
+            this.logger.debug({
                 threadId: connection.threadId,
                 activeConnections: this.metrics.activeConnections
-            });
+            }, 'Database connection released');
             
             this.emit('release');
         });
     }
 
-    // Валидация SQL запросов
+    // SQL query validation
     _validateQuery(sql, params) {
         if (typeof sql !== 'string' || sql.trim().length === 0) {
             throw new Error('SQL query must be a non-empty string');
@@ -98,7 +113,7 @@ class Database extends EventEmitter {
             throw new Error('Query parameters must be an array');
         }
         
-        // Базовая защита от SQL injection
+        // Basic SQL injection protection
         const dangerousPatterns = [
             /;\s*(drop|delete|truncate|alter)\s+/i,
             /union\s+select/i,
@@ -111,7 +126,7 @@ class Database extends EventEmitter {
         }
     }
 
-    // Улучшенное выполнение запроса с retry логикой
+    // Enhanced query execution with retry logic
     async query(sql, params = [], options = {}) {
         this._validateQuery(sql, params);
         
@@ -133,12 +148,12 @@ class Database extends EventEmitter {
                 this._updateMetrics(duration);
                 
                 if (process.env.NODE_ENV !== 'production' || options.logQuery) {
-                    this.logger.log('Query executed', { 
+                    this.logger.info({ 
                         sql: sql.substring(0, 100) + (sql.length > 100 ? '...' : ''),
                         paramCount: params.length,
                         attempt: attempt + 1,
                         duration: `${duration}ms`
-                    });
+                    }, 'Query executed successfully');
                 }
                 
                 this.emit('query', { sql, params, duration, attempt });
@@ -153,25 +168,29 @@ class Database extends EventEmitter {
                 );
                 
                 if (skipRetry || !isRetryable || attempt === maxRetries) {
-                    this.logger.error('Query failed', {
+                    this.logger.error({
                         sql: sql.substring(0, 100),
                         params: params.length,
                         error: error.message,
                         code: error.code,
-                        attempt: attempt + 1
-                    });
+                        attempt: attempt + 1,
+                        sqlQuery: sql,
+                        queryParams: params
+                    }, 'Query execution failed');
                     
                     this.emit('queryError', { sql, params, error, attempt });
                     throw error;
                 }
                 
                 const delay = this.retryConfig.retryDelay * Math.pow(this.retryConfig.backoffMultiplier, attempt);
-                this.logger.warn('Query failed, retrying', {
+                this.logger.warn({
                     error: error.message,
                     code: error.code,
                     delay: `${delay}ms`,
-                    attempt: attempt + 1
-                });
+                    attempt: attempt + 1,
+                    sqlQuery: sql,
+                    queryParams: params
+                }, 'Query failed, retrying');
                 
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -188,18 +207,22 @@ class Database extends EventEmitter {
         }
     }
 
-    // Healthcheck с проверкой соединения
+    // Healthcheck with connection verification
     async _healthcheck() {
         try {
             await this.query('SELECT 1 as health_check', [], { skipRetry: true });
             this.emit('healthcheck', { status: 'healthy' });
         } catch (error) {
-            this.logger.error('Healthcheck failed', { error: error.message });
+            this.logger.error({ 
+                error: error.message,
+                errorCode: error.code,
+                errorData: error
+            }, 'Healthcheck failed');
             this.emit('healthcheck', { status: 'unhealthy', error });
         }
     }
 
-    // Публичный healthcheck
+    // Public healthcheck
     async healthcheck() {
         try {
             const start = Date.now();
@@ -218,7 +241,7 @@ class Database extends EventEmitter {
         }
     }
 
-    // Получение метрик
+    // Get metrics
     getMetrics() {
         return {
             ...this.metrics,
@@ -230,7 +253,7 @@ class Database extends EventEmitter {
         };
     }
 
-    // Множественные запросы с контролем ошибок
+    // Multiple queries with error control
     async multiQuery(queries) {
         if (!Array.isArray(queries)) {
             throw new Error('Queries must be an array');
@@ -253,16 +276,23 @@ class Database extends EventEmitter {
             const error = new Error(`${errors.length} of ${queries.length} queries failed`);
             error.results = results;
             error.errors = errors;
+            
+            this.logger.error({
+                failedQueries: errors.length,
+                totalQueries: queries.length,
+                errors: errors.map(e => ({ index: e.index, message: e.error.message }))
+            }, 'Multiple query execution had failures');
+            
             throw error;
         }
 
         return results;
     }
 
-    // Простые миграции
+    // Simple migrations
     async runMigration(migrationSql) {
         return this.transaction(async (connection) => {
-            // Создаем таблицу миграций если её нет
+            // Create migrations table if it doesn't exist
             await connection.execute(`
                 CREATE TABLE IF NOT EXISTS migrations (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -271,36 +301,36 @@ class Database extends EventEmitter {
                 )
             `);
 
-            // Генерируем имя миграции на основе хеша
+            // Generate migration name based on hash
             const migrationName = require('crypto')
                 .createHash('md5')
                 .update(migrationSql)
                 .digest('hex');
 
-            // Проверяем, выполнялась ли миграция
+            // Check if migration was already executed
             const [existing] = await connection.execute(
                 'SELECT id FROM migrations WHERE name = ?',
                 [migrationName]
             );
 
             if (existing.length > 0) {
-                this.logger.log('Migration already executed', { migrationName });
+                this.logger.info({ migrationName }, 'Migration already executed');
                 return { executed: false, migrationName };
             }
 
-            // Выполняем миграцию
+            // Execute migration
             await connection.execute(migrationSql);
             await connection.execute(
                 'INSERT INTO migrations (name) VALUES (?)',
                 [migrationName]
             );
 
-            this.logger.log('Migration executed successfully', { migrationName });
+            this.logger.info({ migrationName }, 'Migration executed successfully');
             return { executed: true, migrationName };
         });
     }
 
-    // Закрытие пула соединений с graceful shutdown  
+    // Close connection pool with graceful shutdown  
     async close() {
         if (this._healthcheckInterval) {
             clearInterval(this._healthcheckInterval);
@@ -308,27 +338,33 @@ class Database extends EventEmitter {
         
         try {
             await this.pool.end();
-            this.logger.log('Connection pool closed successfully');
+            this.logger.info('Connection pool closed successfully');
             this.emit('close');
         } catch (error) {
-            this.logger.error('Failed to close connection pool', { error: error.message });
+            this.logger.error({ 
+                error: error.message,
+                errorData: error
+            }, 'Failed to close connection pool');
             throw error;
         }
     }
 
-    // Получение соединения
+    // Get connection
     async getConnection() {
         try {
             const connection = await this.pool.getConnection();
-            this.logger.debug('Connection obtained');
+            this.logger.debug('Connection obtained from pool');
             return connection;
         } catch (error) {
-            this.logger.error('Failed to obtain connection', { error: error.message });
+            this.logger.error({ 
+                error: error.message,
+                errorData: error
+            }, 'Failed to obtain connection from pool');
             throw error;
         }
     }
 
-    // Выполнение транзакции
+    // Execute transaction
     async transaction(callback) {
         const connection = await this.getConnection();
 
@@ -337,17 +373,20 @@ class Database extends EventEmitter {
             this.logger.debug('Transaction started');
             const result = await callback(connection);
             await connection.commit();
-            this.logger.log('Transaction committed successfully');
+            this.logger.info('Transaction committed successfully');
             return result;
         } catch (error) {
             await connection.rollback();
-            this.logger.error('Transaction failed', { error: error.message });
+            this.logger.error({ 
+                error: error.message,
+                errorData: error
+            }, 'Transaction failed and rolled back');
             throw error;
         } finally {
             connection.release();
-            this.logger.debug('Connection released');
+            this.logger.debug('Transaction connection released');
         }
     }
 }
 
-module.exports = Database;
+module.exports = MySQLMate;

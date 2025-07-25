@@ -1,7 +1,7 @@
 {
   "name": "mysqlmate",
-  "version": "1.0.6",
-  "description": "Advanced MySQL connection and query management library",
+  "version": "2.0.0",
+  "description": "A powerful and production-ready MySQL wrapper for Node.js applications",
   "main": "index.js",
   "scripts": {
     "test": "jest",
@@ -14,13 +14,18 @@
     "mysql",
     "database",
     "orm",
-    "connection-pool"
+    "connection-pool",
+    "pino",
+    "logging",
+    "retry",
+    "transactions"
   ],
   "author": "Eugene Surkov",
   "license": "MIT",
   "dependencies": {
     "mysql2": "^3.6.5",
-    "winston": "^3.17.0"
+    "pino": "^9.7.0",
+    "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
     "eslint": "^8.56.0",
@@ -28,5 +33,13 @@
   },
   "engines": {
     "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/esurkov1/mysqlmate.git"
+  },
+  "homepage": "https://github.com/esurkov1/mysqlmate#readme",
+  "bugs": {
+    "url": "https://github.com/esurkov1/mysqlmate/issues"
   }
 }

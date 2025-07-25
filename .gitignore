@@ -1,0 +1,92 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+.pnpm-debug.log
+backups
+
+# MyTests
+/.github
+
+design-reference/
+__tests__/
+
+# Logs
+logs
+*.log
+logs/**/*.log
+debug.log*
+error.log*
+*.pid
+*.seed
+*.pid.lock
+
+# Runtime data
+pids
+lib-cov
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+.Trashes
+*.swp
+
+# Thumbnails
+._*
+
+# Editor files
+.vscode/
+.idea/
+*.sw?
+*.sublime-workspace
+*.sublime-project
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Temporary files
+.tmp/
+dist/
+build/
+.cache/
+out/
+
+# Testing
+coverage/
+.jest/
+.nyc_output/
+
+# Database
+*.sqlite
+*.sqlite3
+*.database
+*.database-journal
+
+# Deployment
+.Dockerfile
+.dockerignore
+
+# Misc
+*.bak
+*.orig
+*.tmp
+*.patch
+
+# Ignore all hidden files except specific ones
+.*
+!.gitignore
+
+cursor.config.js
+
+# Игнорируем все ключи для безопасности
+*.pem
+*.key
+*.crt
+*.cert
