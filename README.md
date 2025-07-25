@@ -70,13 +70,18 @@ const db = new MySQLMate({
 ### Advanced Configuration
 ```javascript
 const db = new MySQLMate({
+  // Database connection
   host: 'localhost',
   user: 'username',
   password: 'password',
-  database: 'mydb'
-}, {
+  database: 'mydb',
+  port: 3306,
+  connectionLimit: 10,
+  
   // Connection settings
   connectTimeout: 15000,      // Connection timeout (default: 10000ms)
+  acquireTimeout: 10000,      // Pool acquire timeout
+  timeout: 20000,             // Query timeout
   
   // Retry settings
   maxRetries: 5,              // Max retry attempts (default: 3)
@@ -85,7 +90,7 @@ const db = new MySQLMate({
   
   // Logger configuration
   logger: {
-    title: 'MyApp',           // Logger name (default: class name)
+    title: 'MyApp',           // Logger name (default: 'MySQLMate')
     level: 'info',            // Log level (default: 'info')
     isDev: false              // Use JSON format for production (default: true)
   }
@@ -96,12 +101,11 @@ const db = new MySQLMate({
 
 ### Constructor
 ```javascript
-new MySQLMate(config, options)
+new MySQLMate(config)
 ```
 
 **Parameters:**
-- `config` (object) - MySQL connection configuration
-- `options` (object) - Optional settings (retry, logger, timeouts)
+- `config` (object) - Single configuration object containing database connection settings and options
 
 ### Core Methods
 
@@ -214,7 +218,11 @@ MySQLMate uses Pino for structured logging with configurable output formats:
   - `false`: Uses JSON format for structured logging (production)
 
 ```javascript
-const db = new MySQLMate(config, {
+const db = new MySQLMate({
+  host: 'localhost',
+  user: 'username',
+  password: 'password',
+  database: 'mydb',
   logger: {
     title: 'DatabaseService',
     level: 'debug',
@@ -235,8 +243,7 @@ const db = new MySQLMate({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-}, {
+  database: process.env.DB_NAME,
   logger: {
     title: 'WebAPI',
     level: process.env.LOG_LEVEL || 'info',
@@ -285,8 +292,7 @@ const db = new MySQLMate({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-}, {
+  database: process.env.DB_NAME,
   maxRetries: 5,
   retryDelay: 2000,
   logger: {
@@ -310,8 +316,15 @@ const gracefulShutdown = async (signal) => {
 
 ### Data Processing with Metrics
 ```javascript
-const db = new MySQLMate(config, {
-  logger: { level: 'debug', isDev: true }
+const db = new MySQLMate({
+  host: 'localhost',
+  user: 'username', 
+  password: 'password',
+  database: 'mydb',
+  logger: { 
+    level: 'debug', 
+    isDev: true 
+  }
 });
 
 // Process large dataset with monitoring

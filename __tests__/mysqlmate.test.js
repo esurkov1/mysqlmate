@@ -45,7 +45,8 @@ describe('MySQLMate', () => {
   });
 
   test('should create database instance with logger config', () => {
-    const dbWithLogger = new MySQLMate(testConfig, {
+    const dbWithLogger = new MySQLMate({
+      ...testConfig,
       logger: {
         title: 'TestDB',
         level: 'debug',
@@ -126,7 +127,8 @@ describe('MySQLMate', () => {
   });
 
   test('should handle retry configuration', () => {
-    const dbWithRetry = new MySQLMate(testConfig, {
+    const dbWithRetry = new MySQLMate({
+      ...testConfig,
       maxRetries: 5,
       retryDelay: 2000,
       backoffMultiplier: 3
@@ -135,5 +137,26 @@ describe('MySQLMate', () => {
     expect(dbWithRetry.retryConfig.maxRetries).toBe(5);
     expect(dbWithRetry.retryConfig.retryDelay).toBe(2000);
     expect(dbWithRetry.retryConfig.backoffMultiplier).toBe(3);
+  });
+
+  test('should handle advanced configuration options', () => {
+    const dbWithAdvanced = new MySQLMate({
+      host: 'localhost',
+      user: 'test_user', 
+      password: 'test_password',
+      database: 'test_db',
+      port: 3307,
+      connectionLimit: 20,
+      connectTimeout: 15000,
+      logger: {
+        title: 'CustomDB',
+        level: 'warn',
+        isDev: false
+      }
+    });
+    
+    expect(dbWithAdvanced.config.port).toBe(3307);
+    expect(dbWithAdvanced.config.connectionLimit).toBe(20);
+    expect(dbWithAdvanced.config.connectTimeout).toBe(15000);
   });
 }); 

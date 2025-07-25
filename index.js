@@ -4,23 +4,52 @@ const pino = require('pino');
 
 class MySQLMate extends EventEmitter {
 
-    constructor(config, options = {}) {
+    constructor(config = {}) {
         super();
+        
+        // Extract database connection config
+        const {
+            host, 
+            user, 
+            password, 
+            database, 
+            port, 
+            connectionLimit,
+            acquireTimeout,
+            timeout,
+            reconnect,
+            // Options
+            logger = {},
+            connectTimeout = 10000,
+            maxRetries = 3,
+            retryDelay = 1000,
+            backoffMultiplier = 2,
+            ...otherDbConfig
+        } = config;
         
         // Logger configuration
         const loggerConfig = {
             title: this.constructor.name,
             level: 'info',
             isDev: true,
-            ...options.logger
+            ...logger
         };
         
         this.logger = this.#createLogger(loggerConfig);
         
-        // Extended configuration with timeouts and settings
+        // Database configuration
         this.config = {
-            ...config,
-            connectTimeout: options.connectTimeout || 10000,
+            host,
+            user,
+            password,
+            database,
+            port,
+            connectionLimit,
+            acquireTimeout,
+            timeout,
+            reconnect,
+            connectTimeout,
+            ...otherDbConfig
         };
         
         // Metrics
@@ -34,16 +63,16 @@ class MySQLMate extends EventEmitter {
         
         // Retry settings
         this.retryConfig = {
-            maxRetries: options.maxRetries || 3,
-            retryDelay: options.retryDelay || 1000,
-            backoffMultiplier: options.backoffMultiplier || 2,
+            maxRetries,
+            retryDelay,
+            backoffMultiplier,
             retryableErrors: ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ETIMEDOUT']
         };
         
         // Log connection initialization
         this.logger.info({
-            host: config.host,
-            database: config.database,
+            host: this.config.host,
+            database: this.config.database,
             connectTimeout: this.config.connectTimeout
         }, 'Initializing database connection');
         
