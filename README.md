@@ -85,24 +85,63 @@ const db = new MySQLMate({
   port: 3306,
   connectionLimit: 10,
   
-  // Connection settings
-  connectTimeout: 15000,      // Connection timeout (default: 10000ms)
-  acquireTimeout: 10000,      // Pool acquire timeout
-  timeout: 20000,             // Query timeout
+  // Supported MySQL2 configuration options
+  connectTimeout: 15000,     // Connection timeout
+  socketPath: '/path/to/socket', // Optional Unix socket path
+  ssl: {                     // SSL configuration
+    ca: fs.readFileSync('/path/to/server-certificates/root.crt')
+  },
+  charset: 'utf8mb4',        // Character set
+  timezone: '+00:00',        // Timezone
   
-  // Retry settings
-  maxRetries: 5,              // Max retry attempts (default: 3)
-  retryDelay: 2000,           // Initial retry delay (default: 1000ms)
-  backoffMultiplier: 2,       // Backoff multiplier (default: 2)
+  // Advanced type handling
+  supportBigNumbers: true,   // Handle big numbers as strings
+  bigNumberStrings: true,    // Convert big numbers to strings
+  decimalNumbers: true,      // Parse decimal as numbers
+  dateStrings: true,         // Return dates as strings
   
-  // Logger configuration
+  // Debugging and tracing
+  debug: false,              // Enable debug logging
+  trace: true,               // Enable query tracing
+  multipleStatements: false, // Allow multiple statements per query
+  
+  // Retry and logger configuration
   logger: {
-    title: 'MyApp',           // Logger name (default: 'MySQLMate')
-    level: 'info',            // Log level (default: 'info')
-    isDev: false              // Use JSON format for production (default: true)
-  }
+    title: 'MyApp',          // Logger name
+    level: 'info',           // Log level
+    isDev: false             // Use JSON format for production
+  },
+  maxRetries: 5,             // Max retry attempts
+  retryDelay: 2000           // Initial retry delay
 });
 ```
+
+### Supported MySQL2 Configuration Options
+
+MySQLMate supports the following MySQL2 configuration options:
+
+- `host`: Database host
+- `user`: Database username
+- `password`: Database password
+- `database`: Database name
+- `port`: Database port
+- `connectionLimit`: Maximum number of connections in the pool
+- `connectTimeout`: Connection timeout in milliseconds
+- `socketPath`: Unix socket path for local connections
+- `ssl`: SSL configuration object
+- `charset`: Character set for connection
+- `timezone`: Timezone setting
+- `stringifyObjects`: Convert objects to strings
+- `insecureAuth`: Allow insecure authentication
+- `supportBigNumbers`: Handle big numbers
+- `bigNumberStrings`: Convert big numbers to strings
+- `decimalNumbers`: Parse decimals as numbers
+- `dateStrings`: Return dates as strings
+- `debug`: Enable debug logging
+- `trace`: Enable query tracing
+- `multipleStatements`: Allow multiple statements per query
+
+**Note:** Any unsupported configuration options will be filtered out with a warning log message.
 
 ## API Reference
 

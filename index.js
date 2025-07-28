@@ -7,25 +7,54 @@ class MySQLMate extends EventEmitter {
     constructor(config = {}) {
         super();
         
+        // Supported MySQL2 configuration options
+        const supportedOptions = [
+            'host', 
+            'user', 
+            'password', 
+            'database', 
+            'port',
+            'connectionLimit',
+            'connectTimeout',
+            'socketPath',
+            'ssl',
+            'charset',
+            'timezone',
+            'stringifyObjects',
+            'insecureAuth',
+            'supportBigNumbers',
+            'bigNumberStrings',
+            'decimalNumbers',
+            'dateStrings',
+            'debug',
+            'trace',
+            'multipleStatements'
+        ];
+        
         // Extract database connection config
         const {
             host, 
             user, 
             password, 
             database, 
-            port, 
-            connectionLimit,
-            acquireTimeout,
-            timeout,
-            reconnect,
+            port,
+            connectionLimit = 10,
+            connectTimeout = 10000,
             // Options
             logger = {},
-            connectTimeout = 10000,
             maxRetries = 3,
             retryDelay = 1000,
             backoffMultiplier = 2,
             ...otherDbConfig
         } = config;
+        
+        // Filter and validate configuration
+        const filteredConfig = Object.keys(otherDbConfig)
+            .filter(key => supportedOptions.includes(key))
+            .reduce((obj, key) => {
+                obj[key] = otherDbConfig[key];
+                return obj;
+            }, {});
         
         // Logger configuration
         const loggerConfig = {
@@ -45,12 +74,19 @@ class MySQLMate extends EventEmitter {
             database,
             port,
             connectionLimit,
-            acquireTimeout,
-            timeout,
-            reconnect,
             connectTimeout,
-            ...otherDbConfig
+            ...filteredConfig
         };
+        
+        // Log any filtered out configuration options
+        const filteredOutOptions = Object.keys(otherDbConfig)
+            .filter(key => !supportedOptions.includes(key));
+        
+        if (filteredOutOptions.length > 0) {
+            this.logger.warn({ 
+                filteredOptions: filteredOutOptions 
+            }, 'Some configuration options were filtered out as they are not supported by MySQL2');
+        }
         
         // Graceful shutdown state
         this.isShuttingDown = false;
