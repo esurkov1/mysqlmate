@@ -52,6 +52,10 @@ class MySQLMate extends EventEmitter {
             ...otherDbConfig
         };
         
+        // Graceful shutdown state
+        this.isShuttingDown = false;
+        this.activeOperations = new Set();
+        
         // Metrics
         this.metrics = {
             totalQueries: 0,
@@ -78,7 +82,7 @@ class MySQLMate extends EventEmitter {
         
         this.pool = mysql.createPool(this.config);
         this._setupPoolEvents();
-        this._healthcheckInterval = setInterval(() => this._healthcheck(), 30000);
+        this.#setupProcessHandlers();
     }
 
     #createLogger(config) {
@@ -102,6 +106,22 @@ class MySQLMate extends EventEmitter {
         }
 
         return pino(baseOptions);
+    }
+
+    #setupProcessHandlers() {
+        const gracefulShutdown = async (signal) => {
+            this.logger.info({ signal }, 'Received shutdown signal, starting graceful shutdown');
+            await this.gracefulShutdown();
+            process.exit(0);
+        };
+
+        ['SIGTERM', 'SIGINT', 'SIGHUP'].forEach(signal => {
+            process.on(signal, gracefulShutdown);
+        });
+    }
+
+    #sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     _setupPoolEvents() {
@@ -157,6 +177,10 @@ class MySQLMate extends EventEmitter {
 
     // Enhanced query execution with retry logic
     async query(sql, params = [], options = {}) {
+        if (this.isShuttingDown) {
+            throw new Error('Database is shutting down, cannot execute new queries');
+        }
+        
         this._validateQuery(sql, params);
         
         const { 
@@ -164,68 +188,73 @@ class MySQLMate extends EventEmitter {
             skipRetry = false 
         } = options;
         
+        const operationId = `query-${Date.now()}-${Math.random()}`;
+        this.activeOperations.add(operationId);
+        
         let lastError;
         
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            const start = Date.now();
-            
-            try {
-                this.metrics.totalQueries++;
-                const result = await this.pool.execute(sql, params);
+        try {
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                const start = Date.now();
                 
-                const duration = Date.now() - start;
-                this._updateMetrics(duration);
-                
-                if (process.env.NODE_ENV !== 'production' || options.logQuery) {
+                try {
+                    this.metrics.totalQueries++;
+                    const result = await this.pool.execute(sql, params);
+                    
+                    const duration = Date.now() - start;
+                    this._updateMetrics(duration);
+                    
                     this.logger.info({ 
                         sql: sql.substring(0, 100) + (sql.length > 100 ? '...' : ''),
                         paramCount: params.length,
                         attempt: attempt + 1,
                         duration: `${duration}ms`
                     }, 'Query executed successfully');
-                }
-                
-                this.emit('query', { sql, params, duration, attempt });
-                return result;
-                
-            } catch (error) {
-                lastError = error;
-                this.metrics.failedQueries++;
-                
-                const isRetryable = this.retryConfig.retryableErrors.some(
-                    code => error.code === code || error.message.includes(code)
-                );
-                
-                if (skipRetry || !isRetryable || attempt === maxRetries) {
-                    this.logger.error({
-                        sql: sql.substring(0, 100),
-                        params: params.length,
+                    
+                    this.emit('query', { sql, params, duration, attempt });
+                    return result;
+                    
+                } catch (error) {
+                    lastError = error;
+                    this.metrics.failedQueries++;
+                    
+                    const isRetryable = this.retryConfig.retryableErrors.some(
+                        code => error.code === code || error.message.includes(code)
+                    );
+                    
+                    if (skipRetry || !isRetryable || attempt === maxRetries) {
+                        this.logger.error({
+                            sql: sql.substring(0, 100),
+                            params: params.length,
+                            error: error.message,
+                            code: error.code,
+                            attempt: attempt + 1,
+                            sqlQuery: sql,
+                            queryParams: params
+                        }, 'Query execution failed');
+                        
+                        this.emit('queryError', { sql, params, error, attempt });
+                        throw error;
+                    }
+                    
+                    const delay = this.retryConfig.retryDelay * Math.pow(this.retryConfig.backoffMultiplier, attempt);
+                    this.logger.warn({
                         error: error.message,
                         code: error.code,
+                        delay: `${delay}ms`,
                         attempt: attempt + 1,
                         sqlQuery: sql,
                         queryParams: params
-                    }, 'Query execution failed');
+                    }, 'Query failed, retrying');
                     
-                    this.emit('queryError', { sql, params, error, attempt });
-                    throw error;
+                    await new Promise(resolve => setTimeout(resolve, delay));
                 }
-                
-                const delay = this.retryConfig.retryDelay * Math.pow(this.retryConfig.backoffMultiplier, attempt);
-                this.logger.warn({
-                    error: error.message,
-                    code: error.code,
-                    delay: `${delay}ms`,
-                    attempt: attempt + 1,
-                    sqlQuery: sql,
-                    queryParams: params
-                }, 'Query failed, retrying');
-                
-                await new Promise(resolve => setTimeout(resolve, delay));
             }
+            
+            throw lastError;
+        } finally {
+            this.activeOperations.delete(operationId);
         }
-        
-        throw lastError;
     }
 
     _updateMetrics(duration) {
@@ -284,42 +313,57 @@ class MySQLMate extends EventEmitter {
 
     // Multiple queries with error control
     async multiQuery(queries) {
+        if (this.isShuttingDown) {
+            throw new Error('Database is shutting down, cannot execute new queries');
+        }
+        
         if (!Array.isArray(queries)) {
             throw new Error('Queries must be an array');
         }
 
-        const results = [];
-        const errors = [];
+        const operationId = `multiquery-${Date.now()}-${Math.random()}`;
+        this.activeOperations.add(operationId);
 
-        for (const [index, queryData] of queries.entries()) {
-            try {
-                const { sql, params = [] } = queryData;
-                const result = await this.query(sql, params);
-                results.push({ index, result });
-            } catch (error) {
-                errors.push({ index, error });
+        try {
+            const results = [];
+            const errors = [];
+
+            for (const [index, queryData] of queries.entries()) {
+                try {
+                    const { sql, params = [] } = queryData;
+                    const result = await this.query(sql, params);
+                    results.push({ index, result });
+                } catch (error) {
+                    errors.push({ index, error });
+                }
             }
-        }
 
-        if (errors.length > 0) {
-            const error = new Error(`${errors.length} of ${queries.length} queries failed`);
-            error.results = results;
-            error.errors = errors;
-            
-            this.logger.error({
-                failedQueries: errors.length,
-                totalQueries: queries.length,
-                errors: errors.map(e => ({ index: e.index, message: e.error.message }))
-            }, 'Multiple query execution had failures');
-            
-            throw error;
-        }
+            if (errors.length > 0) {
+                const error = new Error(`${errors.length} of ${queries.length} queries failed`);
+                error.results = results;
+                error.errors = errors;
+                
+                this.logger.error({
+                    failedQueries: errors.length,
+                    totalQueries: queries.length,
+                    errors: errors.map(e => ({ index: e.index, message: e.error.message }))
+                }, 'Multiple query execution had failures');
+                
+                throw error;
+            }
 
-        return results;
+            return results;
+        } finally {
+            this.activeOperations.delete(operationId);
+        }
     }
 
     // Simple migrations
     async runMigration(migrationSql) {
+        if (this.isShuttingDown) {
+            throw new Error('Database is shutting down, cannot execute migrations');
+        }
+        
         return this.transaction(async (connection) => {
             // Create migrations table if it doesn't exist
             await connection.execute(`
@@ -359,12 +403,37 @@ class MySQLMate extends EventEmitter {
         });
     }
 
+    // Graceful shutdown with timeout
+    async gracefulShutdown(timeout = 10000) {
+        if (this.isShuttingDown) return;
+        
+        this.isShuttingDown = true;
+        this.logger.info({ 
+            activeOperations: this.activeOperations.size,
+            timeout
+        }, 'Starting graceful shutdown');
+
+        // Wait for active operations to finish
+        const startWait = Date.now();
+        while (this.activeOperations.size > 0 && (Date.now() - startWait) < timeout) {
+            this.logger.debug({ 
+                activeOperations: this.activeOperations.size 
+            }, 'Waiting for operations to complete');
+            await this.#sleep(100);
+        }
+
+        if (this.activeOperations.size > 0) {
+            this.logger.warn({ 
+                activeOperations: this.activeOperations.size 
+            }, 'Timeout reached, some operations may not have completed');
+        }
+
+        await this.close();
+        this.logger.info('Graceful shutdown completed');
+    }
+
     // Close connection pool with graceful shutdown  
     async close() {
-        if (this._healthcheckInterval) {
-            clearInterval(this._healthcheckInterval);
-        }
-        
         try {
             await this.pool.end();
             this.logger.info('Connection pool closed successfully');
@@ -380,6 +449,10 @@ class MySQLMate extends EventEmitter {
 
     // Get connection
     async getConnection() {
+        if (this.isShuttingDown) {
+            throw new Error('Database is shutting down, cannot obtain new connections');
+        }
+        
         try {
             const connection = await this.pool.getConnection();
             this.logger.debug('Connection obtained from pool');
@@ -395,6 +468,13 @@ class MySQLMate extends EventEmitter {
 
     // Execute transaction
     async transaction(callback) {
+        if (this.isShuttingDown) {
+            throw new Error('Database is shutting down, cannot execute new transactions');
+        }
+        
+        const operationId = `transaction-${Date.now()}-${Math.random()}`;
+        this.activeOperations.add(operationId);
+        
         const connection = await this.getConnection();
 
         try {
@@ -414,6 +494,7 @@ class MySQLMate extends EventEmitter {
         } finally {
             connection.release();
             this.logger.debug('Transaction connection released');
+            this.activeOperations.delete(operationId);
         }
     }
 }

@@ -7,7 +7,7 @@
 
 ## Overview
 
-MySQLMate is a robust Node.js library that simplifies MySQL database operations while providing enterprise-grade features like automatic retry logic, connection pooling, built-in metrics, structured logging with Pino, and transaction management. It abstracts away low-level MySQL complexities while maintaining full control over query execution, making it perfect for microservices, web applications, and data-intensive applications that require reliable database connectivity.
+MySQLMate is a robust Node.js library that simplifies MySQL database operations while providing enterprise-grade features like automatic retry logic, connection pooling, built-in metrics, structured logging with Pino, graceful shutdown handling, and transaction management. It abstracts away low-level MySQL complexities while maintaining full control over query execution, making it perfect for microservices, web applications, and data-intensive applications that require reliable database connectivity.
 
 ## Features
 
@@ -18,9 +18,10 @@ MySQLMate is a robust Node.js library that simplifies MySQL database operations 
 - **Query metrics** and performance tracking
 - **SQL injection protection** with basic validation
 - **Migration support** with automatic tracking
-- **Graceful shutdown** with connection cleanup
+- **Graceful shutdown** with active operation tracking and timeout
 - **Multi-query execution** with error handling
 - **Health check endpoints** for monitoring systems
+- **Automatic process signal handling** (SIGTERM, SIGINT, SIGHUP)
 
 ## Installation
 
@@ -50,6 +51,12 @@ const result = await db.transaction(async (connection) => {
   const [user] = await connection.execute('INSERT INTO users SET ?', [userData]);
   await connection.execute('INSERT INTO user_profiles SET user_id = ?, ?', [user.insertId, profileData]);
   return user;
+});
+
+// Graceful shutdown (automatic on SIGTERM/SIGINT)
+process.on('SIGTERM', async () => {
+  await db.gracefulShutdown();
+  process.exit(0);
 });
 ```
 
@@ -200,12 +207,62 @@ console.log({
 });
 ```
 
+#### `gracefulShutdown(timeout)`
+Performs graceful shutdown, waiting for active operations to complete.
+
+```javascript
+// Graceful shutdown with 15 second timeout
+await db.gracefulShutdown(15000);
+
+// Default timeout is 10 seconds
+await db.gracefulShutdown();
+```
+
 #### `close()`
-Gracefully closes all connections and cleans up resources.
+Immediately closes all connections and cleans up resources.
 
 ```javascript
 await db.close();
 ```
+
+## Graceful Shutdown
+
+MySQLMate provides robust graceful shutdown functionality with automatic process signal handling:
+
+### Automatic Process Handling
+MySQLMate automatically sets up handlers for common process signals:
+
+```javascript
+const db = new MySQLMate({ /* config */ });
+// SIGTERM, SIGINT, and SIGHUP are automatically handled
+// No additional setup required
+```
+
+### Manual Graceful Shutdown
+```javascript
+// Manual graceful shutdown with timeout
+await db.gracefulShutdown(15000); // 15 second timeout
+
+// The shutdown process:
+// 1. Sets isShuttingDown flag to prevent new operations
+// 2. Waits for active queries/transactions to complete
+// 3. Closes the connection pool
+// 4. Logs completion status
+```
+
+### Active Operation Tracking
+```javascript
+// MySQLMate tracks all active operations
+console.log(db.activeOperations.size); // Number of active operations
+console.log(db.isShuttingDown);        // Shutdown state
+```
+
+### Shutdown Behavior
+During graceful shutdown:
+- **New operations are rejected** with descriptive error messages
+- **Active operations continue** until completion or timeout
+- **Detailed logging** shows shutdown progress and any timeouts
+- **Automatic cleanup** ensures no resource leaks
 
 ## Logger Configuration
 
@@ -233,7 +290,7 @@ const db = new MySQLMate({
 
 ## Examples
 
-### Express.js Application
+### Express.js Application with Graceful Shutdown
 ```javascript
 const express = require('express');
 const MySQLMate = require('mysqlmate');
@@ -282,9 +339,18 @@ app.get('/health', async (req, res) => {
   const health = await db.healthcheck();
   res.status(health.status === 'healthy' ? 200 : 503).json(health);
 });
+
+const server = app.listen(3000);
+
+// Graceful shutdown handling (automatic via MySQLMate + manual server shutdown)
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  server.close();
+  // MySQLMate handles its own shutdown automatically
+});
 ```
 
-### Microservice with Graceful Shutdown
+### Microservice with Custom Graceful Shutdown
 ```javascript
 const MySQLMate = require('mysqlmate');
 
@@ -302,19 +368,29 @@ const db = new MySQLMate({
   }
 });
 
-// Graceful shutdown handling
+// Custom graceful shutdown with additional cleanup
 const gracefulShutdown = async (signal) => {
-  console.log(`Received ${signal}, shutting down gracefully...`);
-  await db.close();
+  console.log(`Received ${signal}, starting graceful shutdown...`);
+  
+  // Your custom cleanup logic
+  await cleanup();
+  
+  // MySQLMate graceful shutdown (with custom timeout)
+  await db.gracefulShutdown(20000);
+  
+  console.log('Graceful shutdown completed');
   process.exit(0);
 };
 
+// Override automatic handlers if you need custom logic
+process.removeAllListeners('SIGTERM');
+process.removeAllListeners('SIGINT');
 ['SIGTERM', 'SIGINT'].forEach(signal => {
   process.on(signal, gracefulShutdown);
 });
 ```
 
-### Data Processing with Metrics
+### Data Processing with Metrics and Shutdown Handling
 ```javascript
 const db = new MySQLMate({
   host: 'localhost',
@@ -333,6 +409,12 @@ async function processOrders() {
   let offset = 0;
   
   while (true) {
+    // Check if shutting down
+    if (db.isShuttingDown) {
+      console.log('Graceful shutdown initiated, stopping processing');
+      break;
+    }
+    
     const [orders] = await db.query(
       'SELECT * FROM orders WHERE processed = 0 LIMIT ? OFFSET ?',
       [batchSize, offset]
@@ -354,9 +436,12 @@ async function processOrders() {
     
     // Log progress with metrics
     const metrics = db.getMetrics();
-    console.log(`Processed ${offset} orders. Avg query time: ${metrics.avgQueryTime}ms`);
+    console.log(`Processed ${offset} orders. Active operations: ${db.activeOperations.size}, Avg query time: ${metrics.avgQueryTime}ms`);
   }
 }
+
+// Start processing
+processOrders().catch(console.error);
 ```
 
 ## Error Handling
@@ -372,6 +457,15 @@ try {
   // - error.code: MySQL error code
   // - error.sql: The SQL query that failed
   // - Detailed logging with query context
+}
+
+// Graceful shutdown errors
+try {
+  await db.query('SELECT * FROM users');
+} catch (error) {
+  if (error.message.includes('shutting down')) {
+    console.log('Database is shutting down, operation rejected');
+  }
 }
 ```
 

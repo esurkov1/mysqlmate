@@ -1,6 +1,6 @@
 {
   "name": "mysqlmate",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "A powerful and production-ready MySQL wrapper for Node.js applications",
   "main": "index.js",
   "scripts": {
@@ -18,7 +18,8 @@
     "pino",
     "logging",
     "retry",
-    "transactions"
+    "transactions",
+    "graceful-shutdown"
   ],
   "author": "Eugene Surkov",
   "license": "MIT",

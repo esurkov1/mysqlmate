@@ -35,13 +35,17 @@ describe('MySQLMate', () => {
   });
 
   afterEach(async () => {
-    await db.close();
+    if (!db.isShuttingDown) {
+      await db.close();
+    }
   });
 
   test('should create database instance', () => {
     expect(db).toBeInstanceOf(MySQLMate);
     expect(db.logger).toBeDefined();
     expect(db.metrics).toBeDefined();
+    expect(db.isShuttingDown).toBe(false);
+    expect(db.activeOperations).toBeDefined();
   });
 
   test('should create database instance with logger config', () => {
@@ -158,5 +162,63 @@ describe('MySQLMate', () => {
     expect(dbWithAdvanced.config.port).toBe(3307);
     expect(dbWithAdvanced.config.connectionLimit).toBe(20);
     expect(dbWithAdvanced.config.connectTimeout).toBe(15000);
+  });
+
+  describe('Graceful Shutdown', () => {
+    test('should perform graceful shutdown', async () => {
+      expect(db.isShuttingDown).toBe(false);
+      await db.gracefulShutdown();
+      expect(db.isShuttingDown).toBe(true);
+    });
+
+    test('should reject new queries during shutdown', async () => {
+      db.isShuttingDown = true;
+      await expect(db.query('SELECT 1')).rejects.toThrow('Database is shutting down, cannot execute new queries');
+    });
+
+    test('should reject new transactions during shutdown', async () => {
+      db.isShuttingDown = true;
+      await expect(db.transaction(async () => {})).rejects.toThrow('Database is shutting down, cannot execute new transactions');
+    });
+
+    test('should reject new connections during shutdown', async () => {
+      db.isShuttingDown = true;
+      await expect(db.getConnection()).rejects.toThrow('Database is shutting down, cannot obtain new connections');
+    });
+
+    test('should reject multiQuery during shutdown', async () => {
+      db.isShuttingDown = true;
+      await expect(db.multiQuery([{ sql: 'SELECT 1' }])).rejects.toThrow('Database is shutting down, cannot execute new queries');
+    });
+
+    test('should reject migrations during shutdown', async () => {
+      db.isShuttingDown = true;
+      await expect(db.runMigration('CREATE TABLE test (id INT)')).rejects.toThrow('Database is shutting down, cannot execute migrations');
+    });
+
+    test('should track active operations', async () => {
+      expect(db.activeOperations.size).toBe(0);
+      
+      // Start a query but don't await it immediately
+      const queryPromise = db.query('SELECT 1');
+      expect(db.activeOperations.size).toBe(1);
+      
+      // Complete the query
+      await queryPromise;
+      expect(db.activeOperations.size).toBe(0);
+    });
+
+    test('should wait for active operations during graceful shutdown', async () => {
+      const startTime = Date.now();
+      
+      // Start graceful shutdown with short timeout
+      const shutdownPromise = db.gracefulShutdown(100);
+      
+      // Should complete quickly since no active operations
+      await shutdownPromise;
+      const duration = Date.now() - startTime;
+      expect(duration).toBeLessThan(200);
+      expect(db.isShuttingDown).toBe(true);
+    });
   });
 }); 
